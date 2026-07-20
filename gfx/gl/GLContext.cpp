@@ -733,6 +733,25 @@ GLContext::InitWithPrefixImpl(const char* prefix, bool trygl)
     // Mac OSX 10.6/10.7 machines with Intel GPUs claim only OpenGL 1.4 but
     // have all the GL2+ extensions that we need.
 
+    // On Mac OS X 10.6 (Snow Leopard), NSOpenGLProfileVersion3_2Core is a
+    // 10.7+ symbol and is compiled out when targeting the 10.6 SDK. CGL then
+    // silently hands back a Legacy (GL <= 2.1) context, but the provider may
+    // still have recorded ContextProfile::OpenGLCore based on the requested
+    // attributes. OpenGL core profile did not exist prior to GL 3.2, so if
+    // the actual version is below 3.2 demote the recorded profile to
+    // Compatibility. Otherwise WebGL's AddLegacyFormats_LA8 sees IsCoreProfile()
+    // == true, requires ARB_texture_swizzle to emulate L/A/LA formats, and
+    // fails with "Failed to create mFormatUsage." / "Exhausted GL driver
+    // options." on pre-3.3 GPUs (e.g. GeForce FX, Radeon X1000).
+    if (mProfile == ContextProfile::OpenGLCore && version < 320) {
+        if (ShouldSpew()) {
+            printf_stderr("Demoting GL profile from OpenGLCore to "
+                          "OpenGLCompatibility (actual GL version %u < 3.2)\n",
+                          version);
+        }
+        mProfile = ContextProfile::OpenGLCompatibility;
+    }
+
     ////////////////
 
     // Load OpenGL ES 2.0 symbols, or desktop if we aren't using ES 2.
