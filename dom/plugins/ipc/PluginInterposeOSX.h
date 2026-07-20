@@ -41,11 +41,15 @@ class NSCursor;
 #endif
 
 // The header file QuickdrawAPI.h is missing on OS X 10.7 and up (though the
-// QuickDraw APIs defined in it are still present) -- so we need to supply the
-// relevant parts of its contents here.  It's likely that Apple will eventually
-// remove the APIs themselves (probably in OS X 10.8), so we need to make them
-// weak imports, and test for their presence before using them.
-#if !defined(__QUICKDRAWAPI__) && !defined(__QUICKDRAW__)
+// QuickDraw APIs defined in it were still present at the time this code was
+// written) -- so we need to supply the relevant parts of its contents here.
+//
+// On modern macOS SDKs (10.9+), QuickDraw is fully removed but a stub header
+// may still define __QUICKDRAWAPI__/__QUICKDRAW__ without actually providing
+// `struct Cursor`. Use __MAC_OS_X_VERSION_MAX_ALLOWED (compile-time SDK
+// version) as a more reliable signal than the Quickdraw header guards.
+#if !defined(__QUICKDRAWAPI__) && !defined(__QUICKDRAW__) \
+    || __MAC_OS_X_VERSION_MAX_ALLOWED >= 1090
 
 typedef short Bits16[16];
 struct Cursor {
@@ -55,7 +59,7 @@ struct Cursor {
 };
 typedef struct Cursor Cursor;
 
-#endif /* !__QUICKDRAWAPI__ && !__QUICKDRAW__ */
+#endif /* Quickdraw Cursor fallback */
 
 namespace mac_plugin_interposing {
 
