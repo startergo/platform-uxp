@@ -30,7 +30,8 @@ typedef sig_atomic_t sig_safe_t;
 
 namespace detail {
 
-#if defined(HAVE_THREAD_TLS_KEYWORD) || defined(XP_WIN) || defined(XP_MACOSX)
+#if defined(HAVE_THREAD_TLS_KEYWORD) || defined(XP_WIN) || \
+    (defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 1070)
 #define MOZ_HAS_THREAD_LOCAL
 #endif
 
