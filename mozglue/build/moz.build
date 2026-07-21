@@ -15,6 +15,13 @@ SDK_LIBRARY = True
 if CONFIG['MOZ_ASAN']:
     SOURCES += ['AsanOptions.cpp']
 
+# Mac OS X 10.6 lacks arc4random/arc4random_buf in libSystem (added in
+# 10.7). Provide implementations backed by /dev/urandom so XUL/NSS/etc
+# resolve cleanly at runtime via libmozglue. Guarded internally by
+# __MAC_OS_X_VERSION_MIN_REQUIRED < 1070 so it's a no-op on 10.7+.
+if CONFIG['OS_TARGET'] == 'Darwin':
+    SOURCES += ['compat-macos10.6.cpp']
+
 if not CONFIG['MOZ_ENABLE_NPAPI'] and CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gtk3':
     SOURCES += ['gtk.c']
 
