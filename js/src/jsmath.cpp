@@ -892,9 +892,13 @@ js::math_sin(JSContext* cx, unsigned argc, Value* vp)
 void
 js::math_sincos_uncached(double x, double *sin, double *cos)
 {
-#if defined(HAVE_SINCOS)
+// On Mac OS X 10.6, neither sincos nor __sincos exist in libSystem at
+// runtime (they were added in 10.7+). js/src runs its own configure
+// that doesn't honor the top-level ac_cv_func_* cache overrides, so
+// HAVE___SINCOS can still be defined. Force the fallback on darwin10.
+#if defined(HAVE_SINCOS) && !(defined(__APPLE__) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070)
     sincos(x, sin, cos);
-#elif defined(HAVE___SINCOS)
+#elif defined(HAVE___SINCOS) && !(defined(__APPLE__) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070)
     __sincos(x, sin, cos);
 #else
     *sin = js::math_sin_uncached(x);
