@@ -265,8 +265,12 @@ uint32_t nsChildView::sLastInputEventCount = 0;
 + (BOOL)_shouldZoomOnDoubleClick; // present on 10.7 and above
 @end
 
-// This is only possible with SDKs below 10.15
-#ifndef MAC_OS_X_VERSION_10_15
+// This is only possible with SDKs at or above 10.7 and below 10.15.
+// NSSurface (the class this category overrides) is a 10.7+ public class
+// absent from the 10.6 SDK's AppKit binary, so linking fails if this
+// code is compiled against 10.6.
+#if !defined(MAC_OS_X_VERSION_10_15) && defined(MAC_OS_X_VERSION_10_7) \
+    && (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_7)
 // Starting with 10.7 the bottom corners of all windows are rounded.
 // Unfortunately, the standard rounding that OS X applies to OpenGL views
 // does not use anti-aliasing and looks very crude. Since we want a smooth,
