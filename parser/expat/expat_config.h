@@ -25,6 +25,15 @@
 /* This doesn't mean we have poor entropy, just that we don't use Expat's. */
 #define XML_POOR_ENTROPY 1
 
+/* UXP's configure detects arc4random_buf via AC_CHECK_FUNCS (it links), but
+ * the 10.6 SDK's <stdlib.h> doesn't declare it because it was a private API
+ * until 10.7. Provide the prototype so xmlparse.c compiles cleanly against
+ * the 10.6 SDK with modern clang's -Wimplicit-function-declaration. */
+#if defined(__APPLE__) && __MAC_OS_X_VERSION_MAX_ALLOWED < 1070
+#include <stddef.h>
+extern void arc4random_buf(void *, size_t);
+#endif
+
 #define XMLCALL
 #define XML_STATIC
 #ifdef HAVE_VISIBILITY_HIDDEN_ATTRIBUTE
