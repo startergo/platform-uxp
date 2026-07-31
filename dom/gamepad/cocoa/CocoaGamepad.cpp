@@ -9,6 +9,7 @@
 #include "mozilla/dom/Gamepad.h"
 #include "mozilla/dom/GamepadPlatformService.h"
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/Monitor.h"
 #include "mozilla/Unused.h"
 #include "nsThreadUtils.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -206,6 +207,13 @@ class DarwinGamepadService {
   CFRunLoopRef mMonitorRunLoop;
   nsCOMPtr<nsIThread> mMonitorThread;
 
+  // Synchronizes startup completion between the background thread
+  // (which calls Shutdown) and the monitor thread (which runs
+  // StartupInternal). Guarantees Shutdown never observes an
+  // uninitialized mMonitorRunLoop.
+  Monitor mStartupMonitor;
+  bool mStartupCompleted;
+
   static void DeviceAddedCallback(void* data, IOReturn result,
                                   void* sender, IOHIDDeviceRef device);
   static void DeviceRemovedCallback(void* data, IOReturn result,
@@ -217,6 +225,7 @@ class DarwinGamepadService {
   void DeviceRemoved(IOHIDDeviceRef device);
   void InputValueChanged(IOHIDValueRef value);
   void StartupInternal();
+  bool DoStartup();
 
  public:
   DarwinGamepadService();
@@ -462,19 +471,31 @@ MatchingDictionary(UInt32 inUsagePage, UInt32 inUsage)
   return dict;
 }
 
-DarwinGamepadService::DarwinGamepadService() : mManager(nullptr) {}
+DarwinGamepadService::DarwinGamepadService()
+  : mManager(nullptr),
+    mMonitorRunLoop(nullptr),
+    mStartupMonitor("DarwinGamepadService::mStartupMonitor"),
+    mStartupCompleted(false) {}
 
 DarwinGamepadService::~DarwinGamepadService()
 {
-  if (mManager != nullptr)
+  // Defensive: normal shutdown releases these in Shutdown(). This covers
+  // the case where the object is destroyed without Shutdown() having run.
+  if (mMonitorRunLoop != nullptr) {
+    CFRelease(mMonitorRunLoop);
+    mMonitorRunLoop = nullptr;
+  }
+  if (mManager != nullptr) {
     CFRelease(mManager);
+    mManager = nullptr;
+  }
 }
 
-void
-DarwinGamepadService::StartupInternal()
+bool
+DarwinGamepadService::DoStartup()
 {
   if (mManager != nullptr)
-    return;
+    return true;
 
   IOHIDManagerRef manager = IOHIDManagerCreate(kCFAllocatorDefault,
                                                kIOHIDOptionsTypeNone);
@@ -484,7 +505,7 @@ DarwinGamepadService::StartupInternal()
                                        kJoystickUsage);
   if (!criteria_arr[0]) {
     CFRelease(manager);
-    return;
+    return false;
   }
 
   criteria_arr[1] = MatchingDictionary(kDesktopUsagePage,
@@ -492,7 +513,7 @@ DarwinGamepadService::StartupInternal()
   if (!criteria_arr[1]) {
     CFRelease(criteria_arr[0]);
     CFRelease(manager);
-    return;
+    return false;
   }
 
   CFArrayRef criteria =
@@ -501,7 +522,7 @@ DarwinGamepadService::StartupInternal()
     CFRelease(criteria_arr[1]);
     CFRelease(criteria_arr[0]);
     CFRelease(manager);
-    return;
+    return false;
   }
 
   IOHIDManagerSetDeviceMatchingMultiple(manager, criteria);
@@ -524,20 +545,41 @@ DarwinGamepadService::StartupInternal()
   IOReturn rv = IOHIDManagerOpen(manager, kIOHIDOptionsTypeNone);
   if (rv != kIOReturnSuccess) {
     CFRelease(manager);
-    return;
+    return false;
   }
 
   mManager = manager;
+  return true;
+}
 
-  // We held the handle of the CFRunLoop to make sure we
-  // can shut it down explicitly by CFRunLoopStop in another
-  // thread.
-  mMonitorRunLoop = CFRunLoopGetCurrent();
+void
+DarwinGamepadService::StartupInternal()
+{
+  bool ok = DoStartup();
+
+  // Capture the monitor thread's CFRunLoop before signalling completion.
+  // CFRetain so the reference survives across threads until Shutdown
+  // releases it (CFRunLoopGetCurrent returns a non-retained reference that
+  // would be freed when the monitor thread exits).
+  if (ok) {
+    mMonitorRunLoop = CFRunLoopGetCurrent();
+    CFRetain(mMonitorRunLoop);
+  }
+
+  // Signal startup completion (success or failure) so any Shutdown()
+  // caller waiting on the background thread can proceed safely.
+  {
+    MonitorAutoLock lock(mStartupMonitor);
+    mStartupCompleted = true;
+    lock.NotifyAll();
+  }
 
   // CFRunLoopRun() is a blocking message loop when it's called in
   // non-main thread so this thread cannot receive any other runnables
   // and nsITimer timeout events after it's called.
-  CFRunLoopRun();
+  if (ok) {
+    CFRunLoopRun();
+  }
 }
 
 void DarwinGamepadService::Startup()
@@ -548,8 +590,27 @@ void DarwinGamepadService::Startup()
 
 void DarwinGamepadService::Shutdown()
 {
+  // Wait for the monitor thread to finish initialization (whether it
+  // succeeded or failed). Without this, mMonitorRunLoop may be observed
+  // as garbage if Shutdown() runs before StartupInternal() has had a
+  // chance to populate it (or take its failure-path that leaves it null).
+  {
+    MonitorAutoLock lock(mStartupMonitor);
+    while (!mStartupCompleted) {
+      lock.Wait();
+    }
+  }
+
+  // After startup completion the monitor thread is either:
+  //   - blocked in CFRunLoopRun() (success path), or
+  //   - has already returned from StartupInternal (failure path).
+  // In both cases mMonitorRunLoop and mManager are stable reads.
+  if (mMonitorRunLoop) {
+    CFRunLoopStop(mMonitorRunLoop);
+    CFRelease(mMonitorRunLoop);
+    mMonitorRunLoop = nullptr;
+  }
   IOHIDManagerRef manager = (IOHIDManagerRef)mManager;
-  CFRunLoopStop(mMonitorRunLoop);
   if (manager) {
     IOHIDManagerClose(manager, 0);
     CFRelease(manager);
