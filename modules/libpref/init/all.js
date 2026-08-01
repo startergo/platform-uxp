@@ -2194,6 +2194,14 @@ pref("security.csp.enable", true);
 pref("security.csp.experimentalEnabled", false);
 pref("security.csp.enableStrictDynamic", true);
 pref("security.csp.reporting.enabled", false);
+// When true, eval()/new Function() are permitted regardless of the page's
+// script-src directive. Some challenge/anti-bot scripts (e.g. Cloudflare
+// Turnstile) rely on eval to unpack challenge code and loop forever if the
+// EvalError is caught. Modern browsers sidestep via WASM-unsafe-eval; this
+// engine doesn't, so the EvalError is fatal for those scripts. Flip to true
+// as a per-profile escape hatch. Trades a narrow CSP regression (unsafe-eval
+// only) for compatibility on sites that would otherwise hang.
+pref("security.csp.allow_unsafe_eval_override", false);
 
 // Default Content Security Policy to apply to signed contents.
 pref("security.signed_content.CSP.default", "script-src 'self'; style-src 'self'");

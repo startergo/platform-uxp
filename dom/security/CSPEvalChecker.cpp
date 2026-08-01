@@ -7,6 +7,7 @@
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/Preferences.h"
 #include "nsGlobalWindow.h"
 #include "nsIDocument.h"
 #include "nsCOMPtr.h"
@@ -32,6 +33,15 @@ CheckInternal(nsIContentSecurityPolicy* aCSP,
   *aAllowed = false;
 
   if (!aCSP) {
+    *aAllowed = true;
+    return NS_OK;
+  }
+
+  // Per-profile escape hatch: allow eval()/Function() regardless of CSP
+  // script-src. Some anti-bot/challenge scripts (Cloudflare Turnstile) need
+  // eval to unpack challenge code; without it they catch EvalError and loop.
+  // See security.csp.allow_unsafe_eval_override in all.js.
+  if (Preferences::GetBool("security.csp.allow_unsafe_eval_override", false)) {
     *aAllowed = true;
     return NS_OK;
   }
