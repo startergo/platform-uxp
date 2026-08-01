@@ -2765,7 +2765,10 @@ pref("editor.positioning.offset",            0);
 
 pref("dom.use_watchdog", true);
 pref("dom.max_chrome_script_run_time", 30);
-pref("dom.max_script_run_time", 15);
+// Bumped from 10/15 to give CPU-intensive content scripts (e.g. Cloudflare
+// Turnstile proof-of-work) headroom on slower/older engines. Watchdog still
+// fires for genuinely stuck scripts, just with more room before the dialog.
+pref("dom.max_script_run_time", 30);
 
 // Automatically terminate non-responsive scripts if script_run_time expires.
 pref("dom.always_stop_slow_scripts", false);
