@@ -236,9 +236,10 @@ class DarwinGamepadService
   void StartupInternal();
   bool DoStartup();
 
+  ~DarwinGamepadService();
+
  public:
   DarwinGamepadService();
-  ~DarwinGamepadService();
   void Startup();
   void Shutdown();
   friend class DarwinGamepadServiceStartupRunnable;
