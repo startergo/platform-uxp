@@ -10,6 +10,7 @@
 #include "mozilla/dom/GamepadPlatformService.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Monitor.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/Unused.h"
 #include "nsThreadUtils.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -198,7 +199,15 @@ void Gamepad::init(IOHIDDeviceRef device)
   }
 }
 
-class DarwinGamepadService {
+class DarwinGamepadService
+{
+ public:
+  // Thread-safe refcount: gService (held on the IPDL background thread)
+  // and the monitor thread's runnable RefPtr both touch the counter, so
+  // it must be atomic. Macro provides AddRef/Release via an atomic
+  // counter and is what RefPtr<DarwinGamepadService> binds against.
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(DarwinGamepadService)
+
  private:
   IOHIDManagerRef mManager;
   vector<Gamepad> mGamepads;
@@ -239,10 +248,14 @@ class DarwinGamepadServiceStartupRunnable final : public Runnable
 {
  private:
   ~DarwinGamepadServiceStartupRunnable() {}
-  // This Runnable schedules startup of DarwinGamepadService
-  // in a new thread, pointer to DarwinGamepadService is only
-  // used by this Runnable within its thread.
-  DarwinGamepadService MOZ_NON_OWNING_REF *mService;
+  // Strong reference keeps the service alive for the lifetime of the
+  // monitor thread. StopGamepadMonitoring only drops the background
+  // thread's reference (gService); this RefPtr is what actually
+  // destroys the service, after Run() returns and the runnable is
+  // released during thread teardown. Without this, the monitor thread
+  // can dereference freed memory if Shutdown + delete races ahead of
+  // StartupInternal.
+  RefPtr<DarwinGamepadService> mService;
  public:
   explicit DarwinGamepadServiceStartupRunnable(DarwinGamepadService *service)
              : mService(service) {}
@@ -624,7 +637,7 @@ void DarwinGamepadService::Shutdown()
 namespace mozilla {
 namespace dom {
 
-DarwinGamepadService* gService = nullptr;
+RefPtr<DarwinGamepadService> gService;
 
 void StartGamepadMonitoring()
 {
@@ -643,7 +656,12 @@ void StopGamepadMonitoring()
   }
 
   gService->Shutdown();
-  delete gService;
+  // Drop the background thread's reference. The monitor thread's
+  // runnable still holds a RefPtr, so the DarwinGamepadService is
+  // destroyed only after the runnable is released during thread
+  // teardown (which Shutdown already joined via mMonitorThread->Shutdown()).
+  // This closes the use-after-free window where the monitor thread
+  // could dereference freed members.
   gService = nullptr;
 }
 
