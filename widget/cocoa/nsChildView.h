@@ -99,6 +99,12 @@ class WidgetRenderingContext;
 // format since at least OS X 10.5.
 - (void)_tileTitlebarAndRedisplay:(BOOL)redisplay;
 
+#if !defined(MAC_OS_X_VERSION_10_4) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_4
+// Panther's equivalent of _tileTitlebarAndRedisplay:. Re-running this layout
+// is required after Gecko supplies the custom window-button position.
+- (void)_tileTitlebar;
+#endif
+
 // The following undocumented methods are used to work around bug 1069658,
 // which is an Apple bug or design flaw that effects Yosemite.  None of them
 // were present prior to Yosemite (OS X 10.10).
@@ -156,15 +162,17 @@ typedef NSInteger NSEventGestureAxis;
 #endif // #if defined(MAC_OS_X_VERSION_10_6) && (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_6)
 #endif // #if !defined(MAC_OS_X_VERSION_10_7) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
 
-#if !defined(MAC_OS_X_VERSION_10_5) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_5)
-@protocol NSTextInputClient @end
-#endif
-
 @interface ChildView : NSView<
 #ifdef ACCESSIBILITY
                               mozAccessible,
 #endif
-                              mozView, NSTextInputClient>
+                              mozView,
+#if defined(MAC_OS_X_VERSION_10_5) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5
+                              NSTextInputClient
+#else
+                              NSTextInput
+#endif
+                              >
 {
 @private
   // the nsChildView that created the view. It retains this NSView, so

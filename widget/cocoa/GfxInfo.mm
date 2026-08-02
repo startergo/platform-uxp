@@ -34,6 +34,8 @@ OSXVersionToOperatingSystem(uint32_t aOSXVersion) {
   switch (nsCocoaFeatures::ExtractMajorVersion(aOSXVersion)) {
     case 10:
       switch (nsCocoaFeatures::ExtractMinorVersion(aOSXVersion)) {
+        case 4:
+          return OperatingSystem::OSX10_4;
         case 5:
           return OperatingSystem::OSX10_5;
         case 6:
@@ -367,6 +369,16 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
 
   // Don't evaluate special cases when we're evaluating the downloaded blocklist.
   if (!aDriverInfo.Length()) {
+    if (!nsCocoaFeatures::IsAtLeastVersion(10, 4) &&
+        (aFeature == nsIGfxInfo::FEATURE_OPENGL_LAYERS ||
+         aFeature == nsIGfxInfo::FEATURE_WEBGL_OPENGL ||
+         aFeature == nsIGfxInfo::FEATURE_WEBGL_MSAA ||
+         aFeature == nsIGfxInfo::FEATURE_CANVAS2D_ACCELERATION)) {
+      *aStatus = nsIGfxInfo::FEATURE_BLOCKED_OS_VERSION;
+      aFailureId = "FEATURE_FAILURE_OSX_10_3_NO_GL";
+      return NS_OK;
+    }
+
 #if !defined(MAC_OS_X_VERSION_10_6) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_6)
     // Block the non-QECI drivers for OpenGL. They just crash the browser
     // We only need this for 10.5 (PPC) as all drivers on Intel work.
@@ -396,6 +408,15 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
       aFailureId = "FEATURE_FAILURE_LAYERS_OSX_VERSION";
       return NS_OK;
     }
+#else
+    // No 10.4 intel webgl
+    if (aFeature == nsIGfxInfo::FEATURE_WEBGL_OPENGL &&
+        !nsCocoaFeatures::OnLeopardOrLater()) {
+      *aStatus = nsIGfxInfo::FEATURE_BLOCKED_OS_VERSION;
+      aFailureId = "FEATURE_FAILURE_WEBGL_OSX_VERSION";
+      return NS_OK;
+    }
+#endif
 #endif
 
     // TODO: Many WebGL issues on 10.5, especially:
@@ -403,18 +424,12 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
     //   * bug 618848: Post process shaders and texture mapping crash OS X 10.5
 
     // We will enable it on Intel 10.5 however, but PPC is fundamentally incompatible
+#if !defined(MAC_OS_X_VERSION_10_6) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_6)
+// No WebGL at all for PPC
 #if defined(__ppc__)
     if (aFeature == nsIGfxInfo::FEATURE_WEBGL_OPENGL) {
       *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
       aFailureId = "FEATURE_FAILURE_WEBGL_PPC";
-      return NS_OK;
-    }
-#else
-    // no 10.4!
-    if (aFeature == nsIGfxInfo::FEATURE_WEBGL_OPENGL &&
-        !nsCocoaFeatures::OnLeopardOrLater()) {
-      *aStatus = nsIGfxInfo::FEATURE_BLOCKED_OS_VERSION;
-      aFailureId = "FEATURE_FAILURE_WEBGL_OSX_VERSION";
       return NS_OK;
     }
 #endif
@@ -432,6 +447,7 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
     } else if (aFeature == nsIGfxInfo::FEATURE_CANVAS2D_ACCELERATION) {
       // See bug 1249659
       switch(os) {
+        case OperatingSystem::OSX10_4:
         case OperatingSystem::OSX10_5:
         case OperatingSystem::OSX10_6:
         case OperatingSystem::OSX10_7:

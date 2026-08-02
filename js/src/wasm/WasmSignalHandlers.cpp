@@ -26,6 +26,10 @@
 #include "vm/Runtime.h"
 #include "wasm/WasmInstance.h"
 
+#if defined(JS_CODEGEN_PPC_OSX)
+# include <signal.h>
+#endif
+
 #ifdef XP_MACOSX
 #include <AvailabilityMacros.h>
 #if !defined(MAC_OS_X_VERSION_10_5) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_5)
@@ -1288,6 +1292,28 @@ JitInterruptHandler(int signum, siginfo_t* info, void* context)
 #endif
 #endif // XP_DARWIN && __ppc__
 
+#if defined(JS_CODEGEN_PPC_OSX)
+static void
+RedirectIonBackedgesToInterruptCheck(JSRuntime* rt)
+{
+    if (jit::JitRuntime* jitRuntime = rt->jitRuntime()) {
+        if (!jitRuntime->preventBackedgePatching())
+            jitRuntime->patchIonBackedges(rt, jit::JitRuntime::BackedgeInterruptCheck);
+    }
+}
+
+static const int sInterruptSignal = SIGVTALRM;
+
+static void
+JitInterruptHandler(int signum, siginfo_t* info, void* context)
+{
+    if (JSRuntime* rt = RuntimeForCurrentThread()) {
+        RedirectIonBackedgesToInterruptCheck(rt);
+        rt->finishHandlingJitInterrupt();
+    }
+}
+#endif
+
 static bool sTriedInstallSignalHandlers = false;
 static bool sHaveSignalHandlers = false;
 
@@ -1308,8 +1334,6 @@ ProcessHasSignalHandlers()
     // thread (see InterruptRunningJitCode).
 #if defined(XP_WIN)
     // Windows uses SuspendThread to stop the main thread from another thread.
-#elif defined(XP_DARWIN) && defined(__ppc__)
-    // For now just skip the signal handler for Mac PowerPC
 #else
     struct sigaction interruptHandler;
     interruptHandler.sa_flags = SA_SIGINFO;
@@ -1400,8 +1424,6 @@ wasm::HaveSignalHandlers()
 void
 js::InterruptRunningJitCode(JSRuntime* rt)
 {
-// Like TenFourFox, skip this on Mac PowerPC
-#if !(defined(XP_DARWIN) && defined(__ppc__))
     // If signal handlers weren't installed, then Ion and wasm emit normal
     // interrupt checks and don't need asynchronous interruption.
     if (!HaveSignalHandlers())
@@ -1446,7 +1468,6 @@ js::InterruptRunningJitCode(JSRuntime* rt)
     pthread_t thread = (pthread_t)rt->ownerThreadNative();
     pthread_kill(thread, sInterruptSignal);
 #endif
-#endif // XP_DARWIN && __ppc__
 }
 
 MOZ_COLD bool

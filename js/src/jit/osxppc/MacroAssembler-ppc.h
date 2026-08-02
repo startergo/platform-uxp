@@ -997,6 +997,19 @@ public:
         loadPtr(lhs, tempRegister);
         bc(ma_cmp(tempRegister, rhs, cond), label);
     }
+    void branch32NonZeroFast(AbsoluteAddress lhs, Label *label) {
+        ispew("branch32NonZeroFast(aadr, l)");
+
+        x_li32(addressTempRegister, uint32_t(lhs.addr));
+        lwz(tempRegister, addressTempRegister, 0);
+        cmpwi(tempRegister, 0);
+
+        // Interrupts are rare. Keep the normal path to one short, predicted
+        // branch and put the patchable jump entirely on the interrupt path.
+        BufferOffset noInterrupt = _bc(0, Equal, cr0, LikelyB);
+        b(label);
+        bindSS(noInterrupt);
+    }
     void branch32(Condition cond, wasm::SymbolicAddress addr, Imm32 imm,
                   Label* label) { // XXX
         ispew("XXX branch32(cond, wasmsa, imm, l)");
@@ -1578,9 +1591,17 @@ public:
     }
     void mulBy3(const Register &src, const Register &dest) {
     	ispew("mulBy3(reg, reg)");
-    	// Look familiar?!
-        add(dest, src, src);
-        add(dest, dest, src);
+        if (src == dest) {
+            // Keep the original source alive in the reserved scratch register.
+            // This has a fixed two-instruction dependency chain, whereas mulli
+            // takes 2-3 cycles on the 750/7400 and 3 cycles on the 7450.
+            MOZ_ASSERT(src != tempRegister);
+            x_slwi(tempRegister, src, 1);
+            add(dest, tempRegister, src);
+        } else {
+            add(dest, src, src);
+            add(dest, dest, src);
+        }
     }
 
     void breakpoint();

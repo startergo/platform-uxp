@@ -7,6 +7,23 @@
 
 #include <Cocoa/Cocoa.h>
 
+#if !defined(MAC_OS_X_VERSION_10_5) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_5
+typedef int NSInteger;
+typedef unsigned int NSUInteger;
+
+#define NSIntegerMax    LONG_MAX
+#define NSIntegerMin    LONG_MIN
+#define NSUIntegerMax   ULONG_MAX
+
+#define NSINTEGER_DEFINED 1
+#endif
+
+#if defined(MAC_OS_X_VERSION_10_4) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_4
+#define RELEASE_AUTORELEASE_POOL(pool) [(pool) drain]
+#else
+#define RELEASE_AUTORELEASE_POOL(pool) [(pool) release]
+#endif
+
 bool IsRecursivelyWritable(const char* aPath)
 {
   NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
@@ -23,7 +40,7 @@ bool IsRecursivelyWritable(const char* aPath)
   [paths addObjectsFromArray:subPaths];
 
   if (error) {
-    [pool drain];
+    RELEASE_AUTORELEASE_POOL(pool);
     return false;
   }
 
@@ -35,7 +52,7 @@ bool IsRecursivelyWritable(const char* aPath)
       [fileManager attributesOfItemAtPath:child
                                     error:&error];
     if (error) {
-      [pool drain];
+      RELEASE_AUTORELEASE_POOL(pool);
       return false;
     }
 
@@ -43,11 +60,11 @@ bool IsRecursivelyWritable(const char* aPath)
     // not be descendants of the root path.
     if ([attributes fileType] != NSFileTypeSymbolicLink &&
         [fileManager isWritableFileAtPath:child] == NO) {
-      [pool drain];
+      RELEASE_AUTORELEASE_POOL(pool);
       return false;
     }
   }
 
-  [pool drain];
+  RELEASE_AUTORELEASE_POOL(pool);
   return true;
 }

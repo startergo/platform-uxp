@@ -334,7 +334,10 @@ LoadTypedFloat32(MacroAssembler& masm, const BaseIndex& src, FloatRegister dest,
 static void
 LoadTypedFloat64(MacroAssembler& masm, const Address& src, FloatRegister dest, Register temp)
 {
-    Register scratch = temp == InvalidReg ? tempRegister : temp;
+    // The LIR temp may alias src.base.  A two-word load must preserve the
+    // base after loading the first half, so use PPC's reserved scratch.
+    (void) temp;
+    Register scratch = tempRegister;
     masm.reserveStack(sizeof(double));
     masm.load32ByteSwapped(src, scratch);
     masm.store32(scratch, Address(masm.getStackPointer(), sizeof(uint32_t)));
@@ -347,7 +350,10 @@ LoadTypedFloat64(MacroAssembler& masm, const Address& src, FloatRegister dest, R
 static void
 LoadTypedFloat64(MacroAssembler& masm, const BaseIndex& src, FloatRegister dest, Register temp)
 {
-    Register scratch = temp == InvalidReg ? tempRegister : temp;
+    // computeScaledAddress leaves the effective address in
+    // addressTempRegister; tempRegister is free once that computation ends.
+    (void) temp;
+    Register scratch = tempRegister;
     masm.reserveStack(sizeof(double));
     masm.computeScaledAddress(src, addressTempRegister);
     masm.load32ByteSwapped(Address(addressTempRegister, src.offset), scratch);
@@ -520,6 +526,66 @@ template void MacroAssembler::loadFromTypedArrayNative(Scalar::Type arrayType, c
 template void MacroAssembler::loadFromTypedArrayNative(Scalar::Type arrayType, const BaseIndex& src,
                                                        AnyRegister dest, Register temp, Label* fail,
                                                        bool canonicalizeDoubles);
+
+template<typename T>
+void
+MacroAssembler::loadFromTypedArrayNative(Scalar::Type arrayType, const T& src,
+                                         const ValueOperand& dest, bool allowDouble,
+                                         Register temp, Label* fail)
+{
+    switch (arrayType) {
+      case Scalar::Int8:
+      case Scalar::Uint8:
+      case Scalar::Uint8Clamped:
+      case Scalar::Int16:
+      case Scalar::Uint16:
+      case Scalar::Int32:
+        loadFromTypedArrayNative(arrayType, src, AnyRegister(dest.scratchReg()), InvalidReg,
+                                 nullptr);
+        tagValue(JSVAL_TYPE_INT32, dest.scratchReg(), dest);
+        break;
+      case Scalar::Uint32:
+        load32(src, temp);
+        if (allowDouble) {
+            Label done, isDouble;
+            branchTest32(Assembler::Signed, temp, temp, &isDouble);
+            tagValue(JSVAL_TYPE_INT32, temp, dest);
+            jump(&done);
+            bind(&isDouble);
+            convertUInt32ToDouble(temp, ScratchDoubleReg);
+            boxDouble(ScratchDoubleReg, dest);
+            bind(&done);
+        } else {
+            branchTest32(Assembler::Signed, temp, temp, fail);
+            tagValue(JSVAL_TYPE_INT32, temp, dest);
+        }
+        break;
+      case Scalar::Float32:
+        loadFromTypedArrayNative(arrayType, src, AnyRegister(ScratchFloat32Reg),
+                                 dest.scratchReg(), nullptr);
+        convertFloat32ToDouble(ScratchFloat32Reg, ScratchDoubleReg);
+        boxDouble(ScratchDoubleReg, dest);
+        break;
+      case Scalar::Float64:
+        loadFromTypedArrayNative(arrayType, src, AnyRegister(ScratchDoubleReg),
+                                 dest.scratchReg(), nullptr);
+        boxDouble(ScratchDoubleReg, dest);
+        break;
+      case Scalar::BigInt64:
+      case Scalar::BigUint64:
+        jump(fail);
+        break;
+      default:
+        MOZ_CRASH("Invalid typed array type");
+    }
+}
+
+template void MacroAssembler::loadFromTypedArrayNative(Scalar::Type arrayType, const Address& src,
+                                                       const ValueOperand& dest, bool allowDouble,
+                                                       Register temp, Label* fail);
+template void MacroAssembler::loadFromTypedArrayNative(Scalar::Type arrayType, const BaseIndex& src,
+                                                       const ValueOperand& dest, bool allowDouble,
+                                                       Register temp, Label* fail);
 #endif
 
 template<typename T>

@@ -6808,6 +6808,59 @@ CodeGenerator::visitModD(LModD* ins)
 
     MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
 
+#ifdef JS_CODEGEN_PPC_OSX
+    bool hasTruncatedPowerOfTwoFastPath = false;
+    Label slow;
+    Label done;
+    MMod* mir = ins->mirRaw()->toMod();
+
+    // Type feedback can keep MMod as Double even when its only observable
+    // consumer applies ToInt32. Inspect that use directly instead of relying
+    // on truncation metadata, which is not propagated to this Double node.
+    bool hasTruncatingUse = false;
+    if (mir->hasOneDefUse()) {
+        for (MUseIterator use(mir->usesBegin()); use != mir->usesEnd(); use++) {
+            if ((*use)->consumer()->isDefinition()) {
+                hasTruncatingUse =
+                    (*use)->consumer()->toDefinition()->isTruncateToInt32();
+                break;
+            }
+        }
+    }
+
+    if (!gen->compilingWasm() && hasTruncatingUse) {
+        MDefinition* rhsDef = mir->rhs();
+        if (rhsDef->isToDouble())
+            rhsDef = rhsDef->toToDouble()->input();
+
+        int32_t divisor;
+        if (rhsDef->isConstant() &&
+            mozilla::NumberIsInt32(rhsDef->toConstant()->numberToDouble(), &divisor) &&
+            divisor != 0) {
+            uint32_t magnitude =
+                divisor < 0 ? 0u - uint32_t(divisor) : uint32_t(divisor);
+            if (mozilla::IsPowerOfTwo(magnitude)) {
+                hasTruncatedPowerOfTwoFastPath = true;
+                Register lhsInt = temp;
+
+                // Truncating consumers do not distinguish -0 from 0.
+                masm.convertDoubleToInt32(lhs, lhsInt, &slow, false);
+
+                // Compute abs(lhs) & (divisor - 1), then restore lhs' sign.
+                masm.srawi(addressTempRegister, lhsInt, 31);
+                masm.xor_(lhsInt, lhsInt, addressTempRegister);
+                masm.subf(lhsInt, addressTempRegister, lhsInt);
+                masm.and32(Imm32(magnitude - 1), lhsInt);
+                masm.xor_(lhsInt, lhsInt, addressTempRegister);
+                masm.subf(lhsInt, addressTempRegister, lhsInt);
+                masm.convertInt32ToDouble(lhsInt, ReturnDoubleReg);
+                masm.jump(&done);
+                masm.bind(&slow);
+            }
+        }
+    }
+#endif
+
     masm.setupUnalignedABICall(temp);
     masm.passABIArg(lhs, MoveOp::DOUBLE);
     masm.passABIArg(rhs, MoveOp::DOUBLE);
@@ -6816,6 +6869,11 @@ CodeGenerator::visitModD(LModD* ins)
         masm.callWithABI(wasm::SymbolicAddress::ModD, MoveOp::DOUBLE);
     else
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, NumberMod), MoveOp::DOUBLE);
+
+#ifdef JS_CODEGEN_PPC_OSX
+    if (hasTruncatedPowerOfTwoFastPath)
+        masm.bind(&done);
+#endif
 }
 
 typedef bool (*BinaryFn)(JSContext*, MutableHandleValue, MutableHandleValue, MutableHandleValue);
@@ -10821,7 +10879,9 @@ CodeGenerator::visitLoadUnboxedScalar(LLoadUnboxedScalar* lir)
     if (lir->index()->isConstant()) {
         Address source(elements, ToInt32(lir->index()) * width + mir->offsetAdjustment());
 #if defined(JS_CODEGEN_PPC_OSX)
-        if (mir->target() == MLoadUnboxedScalar::TypedArrayTarget)
+        if (mir->target() == MLoadUnboxedScalar::TypedArrayTarget ||
+            (mir->target() == MLoadUnboxedScalar::TypedObjectTarget &&
+             readType != Scalar::Float32 && readType != Scalar::Float64))
             masm.loadFromTypedArray(readType, source, out, temp, &fail, canonicalizeDouble);
         else
             masm.loadFromTypedArrayNative(readType, source, out, temp, &fail, canonicalizeDouble);
@@ -10832,7 +10892,9 @@ CodeGenerator::visitLoadUnboxedScalar(LLoadUnboxedScalar* lir)
         BaseIndex source(elements, ToRegister(lir->index()), ScaleFromElemWidth(width),
                          mir->offsetAdjustment());
 #if defined(JS_CODEGEN_PPC_OSX)
-        if (mir->target() == MLoadUnboxedScalar::TypedArrayTarget)
+        if (mir->target() == MLoadUnboxedScalar::TypedArrayTarget ||
+            (mir->target() == MLoadUnboxedScalar::TypedObjectTarget &&
+             readType != Scalar::Float32 && readType != Scalar::Float64))
             masm.loadFromTypedArray(readType, source, out, temp, &fail, canonicalizeDouble);
         else
             masm.loadFromTypedArrayNative(readType, source, out, temp, &fail, canonicalizeDouble);
@@ -10909,10 +10971,10 @@ static inline void
 StoreToTypedArrayNative(MacroAssembler& masm, Scalar::Type writeType, const LAllocation* value,
                         const T& dest)
 {
-    if (writeType == Scalar::Float32 ||
-        writeType == Scalar::Float64)
-    {
-        masm.storeToTypedFloatArray(writeType, ToFloatRegister(value), dest);
+    if (writeType == Scalar::Float32) {
+        masm.storeFloat32(ToFloatRegister(value), dest);
+    } else if (writeType == Scalar::Float64) {
+        masm.storeDouble(ToFloatRegister(value), dest);
     } else {
         if (value->isConstant())
             masm.storeToTypedIntArrayNative(writeType, Imm32(ToInt32(value)), dest);
@@ -10937,7 +10999,9 @@ CodeGenerator::visitStoreUnboxedScalar(LStoreUnboxedScalar* lir)
     if (lir->index()->isConstant()) {
         Address dest(elements, ToInt32(lir->index()) * width + mir->offsetAdjustment());
 #if defined(JS_CODEGEN_PPC_OSX)
-        if (mir->target() == MStoreUnboxedScalar::TypedArrayTarget)
+        if (mir->target() == MStoreUnboxedScalar::TypedArrayTarget ||
+            (mir->target() == MStoreUnboxedScalar::TypedObjectTarget &&
+             writeType != Scalar::Float32 && writeType != Scalar::Float64))
             StoreToTypedArray(masm, writeType, value, dest);
         else
             StoreToTypedArrayNative(masm, writeType, value, dest);
@@ -10948,7 +11012,9 @@ CodeGenerator::visitStoreUnboxedScalar(LStoreUnboxedScalar* lir)
         BaseIndex dest(elements, ToRegister(lir->index()), ScaleFromElemWidth(width),
                        mir->offsetAdjustment());
 #if defined(JS_CODEGEN_PPC_OSX)
-        if (mir->target() == MStoreUnboxedScalar::TypedArrayTarget)
+        if (mir->target() == MStoreUnboxedScalar::TypedArrayTarget ||
+            (mir->target() == MStoreUnboxedScalar::TypedObjectTarget &&
+             writeType != Scalar::Float32 && writeType != Scalar::Float64))
             StoreToTypedArray(masm, writeType, value, dest);
         else
             StoreToTypedArrayNative(masm, writeType, value, dest);
@@ -11031,6 +11097,17 @@ CodeGenerator::visitGuardSharedTypedArray(LGuardSharedTypedArray* guard)
 {
     Register obj = ToRegister(guard->input());
     Register tmp = ToRegister(guard->tempInt());
+
+#if defined(JS_CODEGEN_PPC_OSX)
+    if (guard->mir()->rejectsResizableOrGrowable()) {
+        masm.loadPtr(Address(obj, TypedArrayObject::offsetOfElements()), tmp);
+        masm.load32(Address(tmp, ObjectElements::offsetOfFlags()), tmp);
+        bailoutTest32(Assembler::NonZero, tmp,
+                      Imm32(ObjectElements::RESIZABLE_OR_GROWABLE_BUFFER),
+                      guard->snapshot());
+        return;
+    }
+#endif
 
     // The shared-memory flag is a bit in the ObjectElements header
     // that is set if the TypedArray is mapping a SharedArrayBuffer.
@@ -11956,7 +12033,11 @@ CodeGenerator::visitInterruptCheck(LInterruptCheck* lir)
     OutOfLineCode* ool = oolCallVM(InterruptCheckInfo, lir, ArgList(), StoreNothing());
 
     AbsoluteAddress interruptAddr(GetJitContext()->runtime->addressOfInterruptUint32());
+#if defined(JS_CODEGEN_PPC_OSX)
+    masm.branch32NonZeroFast(interruptAddr, ool->entry());
+#else
     masm.branch32(Assembler::NotEqual, interruptAddr, Imm32(0), ool->entry());
+#endif
     masm.bind(ool->rejoin());
 }
 

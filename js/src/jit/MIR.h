@@ -8934,7 +8934,8 @@ class MLoadUnboxedScalar
   public:
     enum TargetKind {
         ScalarTarget = 0,
-        TypedArrayTarget
+        TypedArrayTarget,
+        TypedObjectTarget
     };
 
   private:
@@ -9206,7 +9207,8 @@ class MStoreUnboxedScalar
 #if defined(JS_CODEGEN_PPC_OSX)
     enum TargetKind {
         ScalarTarget = 0,
-        TypedArrayTarget
+        TypedArrayTarget,
+        TypedObjectTarget
     };
 #endif
 
@@ -12353,12 +12355,30 @@ class MGuardSharedTypedArray
   : public MUnaryInstruction,
     public SingleObjectPolicy::Data
 {
+#if defined(JS_CODEGEN_PPC_OSX)
+    bool rejectResizableOrGrowable_;
+#endif
+
     explicit MGuardSharedTypedArray(MDefinition* obj)
       : MUnaryInstruction(obj)
+#if defined(JS_CODEGEN_PPC_OSX)
+      , rejectResizableOrGrowable_(false)
+#endif
     {
         setGuard();
         setMovable();
     }
+
+#if defined(JS_CODEGEN_PPC_OSX)
+    MGuardSharedTypedArray(MDefinition* obj, bool rejectResizableOrGrowable)
+      : MUnaryInstruction(obj),
+        rejectResizableOrGrowable_(rejectResizableOrGrowable)
+    {
+        MOZ_ASSERT(rejectResizableOrGrowable);
+        setGuard();
+        setMovable();
+    }
+#endif
 
 public:
     INSTRUCTION_HEADER(GuardSharedTypedArray)
@@ -12368,6 +12388,12 @@ public:
     AliasSet getAliasSet() const override {
         return AliasSet::None();
     }
+
+#if defined(JS_CODEGEN_PPC_OSX)
+    bool rejectsResizableOrGrowable() const {
+        return rejectResizableOrGrowable_;
+    }
+#endif
 };
 
 class MCompareExchangeTypedArrayElement

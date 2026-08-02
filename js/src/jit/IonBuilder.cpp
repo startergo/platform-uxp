@@ -9483,7 +9483,7 @@ IonBuilder::pushScalarLoadFromTypedObject(MDefinition* obj,
                                                        DoesNotRequireMemoryBarrier,
                                                        adjustment);
 #if defined(JS_CODEGEN_PPC_OSX)
-    load->setTarget(MLoadUnboxedScalar::TypedArrayTarget);
+    load->setTarget(MLoadUnboxedScalar::TypedObjectTarget);
 #endif
     current->add(load);
     current->push(load);
@@ -9763,6 +9763,13 @@ IonBuilder::getStaticTypedArrayObject(MDefinition* obj, MDefinition* index)
         trackOptimizationOutcome(TrackedOutcome::NotSingleton);
         return nullptr;
     }
+
+#if defined(JS_CODEGEN_PPC_OSX)
+    if (tarrObj->as<TypedArrayObject>().hasResizableOrGrowableBuffer()) {
+        trackOptimizationOutcome(TrackedOutcome::AccessNotTypedArray);
+        return nullptr;
+    }
+#endif
 
     TypeSet::ObjectKey* tarrKey = TypeSet::ObjectKey::get(tarrObj);
     if (tarrKey->unknownProperties()) {
@@ -10299,6 +10306,10 @@ bool
 IonBuilder::jsop_getelem_typed(MDefinition* obj, MDefinition* index,
                                Scalar::Type arrayType)
 {
+#if defined(JS_CODEGEN_PPC_OSX)
+    addFixedLengthTypedArrayGuard(obj);
+#endif
+
     TemporaryTypeSet* types = bytecodeTypes(pc);
 
     bool maybeUndefined = types->hasType(TypeSet::UndefinedType());
@@ -10878,6 +10889,10 @@ bool
 IonBuilder::jsop_setelem_typed(Scalar::Type arrayType,
                                MDefinition* obj, MDefinition* id, MDefinition* value)
 {
+#if defined(JS_CODEGEN_PPC_OSX)
+    addFixedLengthTypedArrayGuard(obj);
+#endif
+
     SetElemICInspector icInspect(inspector->setElemICInspector(pc));
     bool expectOOB = icInspect.sawOOBTypedArrayWrite();
 
@@ -14590,6 +14605,16 @@ IonBuilder::addSharedTypedArrayGuard(MDefinition* obj)
     return guard;
 }
 
+#if defined(JS_CODEGEN_PPC_OSX)
+MInstruction*
+IonBuilder::addFixedLengthTypedArrayGuard(MDefinition* obj)
+{
+    MGuardSharedTypedArray* guard = MGuardSharedTypedArray::New(alloc(), obj, true);
+    current->add(guard);
+    return guard;
+}
+#endif
+
 TemporaryTypeSet*
 IonBuilder::bytecodeTypes(jsbytecode* pc)
 {
@@ -14839,7 +14864,7 @@ IonBuilder::storeScalarTypedObjectValue(MDefinition* typedObj,
                                  type, MStoreUnboxedScalar::TruncateInput,
                                  DoesNotRequireMemoryBarrier, adjustment);
 #if defined(JS_CODEGEN_PPC_OSX)
-    store->setTarget(MStoreUnboxedScalar::TypedArrayTarget);
+    store->setTarget(MStoreUnboxedScalar::TypedObjectTarget);
 #endif
     current->add(store);
 
