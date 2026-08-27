@@ -10,6 +10,11 @@
 #include "prmem.h"
 #include "prlink.h"
 
+#ifdef XP_DARWIN
+#include <dlfcn.h>
+#include <AvailabilityMacros.h>
+#endif
+
 // We use a known symbol located in lgpllibs to determine its location.
 // soundtouch happens to be always included in lgpllibs
 #include "soundtouch/SoundTouch.h"
@@ -28,6 +33,23 @@ static FFmpegLibWrapper sFFVPXLib;
 FFVPXRuntimeLinker::LinkStatus FFVPXRuntimeLinker::sLinkStatus =
   LinkStatus_INIT;
 
+#ifdef XP_DARWIN
+static void*
+MozAVLink(const char* aName)
+{
+  void* lib = dlopen(aName, RTLD_NOW | RTLD_LOCAL);
+#if !defined(MAC_OS_X_VERSION_10_4) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_4
+  if (!lib) {
+    // try loading it without RTLD_LOCAL, as this is known to not work on 10.3
+    lib = dlopen(aName, RTLD_NOW | RTLD_GLOBAL);
+  }
+#endif
+  if (!lib) {
+    FFMPEG_LOG("unable to load library %s: %s", aName, dlerror());
+  }
+  return lib;
+}
+#else
 static PRLibrary*
 MozAVLink(const char* aName)
 {
@@ -40,6 +62,7 @@ MozAVLink(const char* aName)
   }
   return lib;
 }
+#endif
 
 /* static */ bool
 FFVPXRuntimeLinker::Init()
