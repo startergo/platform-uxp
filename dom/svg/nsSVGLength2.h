@@ -122,13 +122,12 @@ public:
   void GetAnimValueString(nsAString& aValue) const;
 
   float GetBaseValue(nsSVGElement* aSVGElement) const
-    { return GetBaseValue(SVGElementMetrics(aSVGElement)); }
+    { return GetBaseValue(mozilla::dom::SVGElementMetrics(aSVGElement)); }
 
   float GetAnimValue(nsSVGElement* aSVGElement) const
-    { return GetAnimValue(SVGElementMetrics(aSVGElement)); }
+    { return GetAnimValue(mozilla::dom::SVGElementMetrics(aSVGElement)); }
   float GetAnimValue(nsIFrame* aFrame) const;
-  float GetAnimValue(mozilla::dom::SVGSVGElement* aCtx) const
-    { return GetAnimValue(SVGElementMetrics(aCtx, aCtx)); }
+  float GetAnimValue(mozilla::dom::SVGSVGElement* aCtx) const;
   float GetAnimValue(const UserSpaceMetrics& aMetrics) const
     {
       return mIsCalc
@@ -154,8 +153,7 @@ public:
   float GetBaseValInSpecifiedUnits() const
     { return mIsCalc ? CalcSpecifiedValue() : mBaseVal; }
 
-  float GetBaseValue(mozilla::dom::SVGSVGElement* aCtx) const
-    { return GetBaseValue(SVGElementMetrics(aCtx, aCtx)); }
+  float GetBaseValue(mozilla::dom::SVGSVGElement* aCtx) const;
   float GetBaseValue(const UserSpaceMetrics& aMetrics) const
     {
       return mIsCalc ? ResolveCalc(aMetrics)

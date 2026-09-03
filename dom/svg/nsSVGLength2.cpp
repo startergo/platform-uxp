@@ -462,6 +462,18 @@ nsSVGLength2::GetAnimValue(nsIFrame *aFrame) const
 }
 
 float
+nsSVGLength2::GetAnimValue(SVGSVGElement *aCtx) const
+{
+  return GetAnimValue(SVGElementMetrics(aCtx, aCtx));
+}
+
+float
+nsSVGLength2::GetBaseValue(SVGSVGElement *aCtx) const
+{
+  return GetBaseValue(SVGElementMetrics(aCtx, aCtx));
+}
+
+float
 nsSVGLength2::GetUnitScaleFactor(const UserSpaceMetrics& aMetrics, uint8_t aUnitType) const
 {
   switch (aUnitType) {
