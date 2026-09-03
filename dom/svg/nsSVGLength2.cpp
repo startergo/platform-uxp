@@ -145,7 +145,7 @@ private:
 
   void SkipWs()
   {
-    while (mPos < mEnd && SVGContentUtils::IsSVGWhitespace(*mPos)) {
+    while (mPos < mEnd && IsSVGWhitespace(*mPos)) {
       ++mPos;
     }
   }
@@ -259,8 +259,8 @@ private:
       return true;
     }
 
-    RangedPtr<const char16_t> iter(mPos, mEnd);
-    RangedPtr<const char16_t> iterEnd(mEnd, mEnd);
+    RangedPtr<const char16_t> iter(mPos, mPos, mEnd);
+    RangedPtr<const char16_t> iterEnd(mEnd, mPos, mEnd);
     double value;
     if (!SVGContentUtils::ParseNumber(iter, iterEnd, value)) {
       return false;
@@ -296,10 +296,10 @@ ParseCalcLengthString(const nsAString& aString, float& aPercent, float& aAbsPx)
 {
   const char16_t* p = aString.BeginReading();
   const char16_t* end = aString.EndReading();
-  while (p < end && SVGContentUtils::IsSVGWhitespace(*p)) {
+  while (p < end && IsSVGWhitespace(*p)) {
     ++p;
   }
-  while (end > p && SVGContentUtils::IsSVGWhitespace(end[-1])) {
+  while (end > p && IsSVGWhitespace(end[-1])) {
     --end;
   }
 
