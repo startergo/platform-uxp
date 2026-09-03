@@ -629,6 +629,11 @@ ComputeSynthesizedViewBoxDimension(const nsSVGLength2& aLength,
                                    float aViewportLength,
                                    const SVGSVGElement* aSelf)
 {
+  if (aLength.IsCalc()) {
+    return aLength.CalcPercent() / 100.0f * aViewportLength +
+           aLength.CalcAbsPx();
+  }
+
   if (aLength.IsPercentage()) {
     return aViewportLength * aLength.GetAnimValInSpecifiedUnits() / 100.0f;
   }

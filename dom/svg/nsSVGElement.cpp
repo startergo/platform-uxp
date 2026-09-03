@@ -1656,9 +1656,14 @@ nsSVGElement::GetAnimatedLengthValues(float *aFirst, ...)
   while (f && i < info.mLengthCount) {
     uint8_t type = info.mLengths[i].GetSpecifiedUnitType();
     if (!ctx) {
-      if (type != nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER &&
-          type != nsIDOMSVGLength::SVG_LENGTHTYPE_PX)
+      // calc() lengths are stored with the NUMBER unit type but resolve
+      // their percentage component against the viewport, so they need the
+      // length context just like percentages do.
+      if (info.mLengths[i].IsCalc() ||
+          (type != nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER &&
+           type != nsIDOMSVGLength::SVG_LENGTHTYPE_PX)) {
         ctx = GetCtx();
+      }
     }
     if (type == nsIDOMSVGLength::SVG_LENGTHTYPE_EMS ||
         type == nsIDOMSVGLength::SVG_LENGTHTYPE_EXS)
