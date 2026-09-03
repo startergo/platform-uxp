@@ -115,6 +115,219 @@ GetValueFromString(const nsAString& aString,
   return IsValidUnitType(*aUnitType);
 }
 
+// Parser for calc() expressions in SVG length attributes, e.g.
+// "calc(100% - 2px)". Supports sums and products of <number> and
+// <percentage> terms (a unitless number counts as user units, matching SVG
+// attribute syntax). The expression is reduced to a percentage component and
+// an absolute (user unit) component that are resolved against the element's
+// metrics when the length is used. Returns false for anything else so that
+// the existing syntax-error path is preserved.
+namespace {
+
+class CalcExprParser
+{
+public:
+  CalcExprParser(const char16_t* aPos, const char16_t* aEnd)
+    : mPos(aPos), mEnd(aEnd)
+  {
+  }
+
+  bool Parse(double& aPercent, double& aAbsPx)
+  {
+    if (!ParseSum(aPercent, aAbsPx) || !AtEnd()) {
+      return false;
+    }
+    return mozilla::IsFinite(aPercent) && mozilla::IsFinite(aAbsPx);
+  }
+
+private:
+  bool AtEnd() const { return mPos == mEnd; }
+
+  void SkipWs()
+  {
+    while (mPos < mEnd && SVGContentUtils::IsSVGWhitespace(*mPos)) {
+      ++mPos;
+    }
+  }
+
+  bool ParseSum(double& aPercent, double& aAbsPx)
+  {
+    if (!ParseProduct(aPercent, aAbsPx)) {
+      return false;
+    }
+    while (true) {
+      SkipWs();
+      if (AtEnd()) {
+        return true;
+      }
+      char16_t op = *mPos;
+      if (op != '+' && op != '-') {
+        return true;
+      }
+      ++mPos;
+      double p2, x2;
+      if (!ParseProduct(p2, x2)) {
+        return false;
+      }
+      if (op == '+') {
+        aPercent += p2;
+        aAbsPx += x2;
+      } else {
+        aPercent -= p2;
+        aAbsPx -= x2;
+      }
+    }
+  }
+
+  bool ParseProduct(double& aPercent, double& aAbsPx)
+  {
+    if (!ParseUnary(aPercent, aAbsPx)) {
+      return false;
+    }
+    while (true) {
+      SkipWs();
+      if (AtEnd()) {
+        return true;
+      }
+      char16_t op = *mPos;
+      if (op != '*' && op != '/') {
+        return true;
+      }
+      ++mPos;
+      double p2, x2;
+      if (!ParseUnary(p2, x2)) {
+        return false;
+      }
+      if (op == '*') {
+        // At most one side may carry a percentage; the percentage-free side
+        // acts as the scalar multiplier.
+        if (aPercent != 0 && p2 != 0) {
+          return false;
+        }
+        if (aPercent == 0) {
+          aPercent = aAbsPx * p2;
+          aAbsPx *= x2;
+        } else {
+          // The right side is percentage-free, so it scales both components.
+          aPercent *= x2;
+          aAbsPx *= x2;
+        }
+      } else {
+        // Division is only valid by a percentage-free term.
+        if (p2 != 0 || x2 == 0) {
+          return false;
+        }
+        aPercent /= x2;
+        aAbsPx /= x2;
+      }
+    }
+  }
+
+  bool ParseUnary(double& aPercent, double& aAbsPx)
+  {
+    SkipWs();
+    if (AtEnd()) {
+      return false;
+    }
+    char16_t op = *mPos;
+    if (op == '+' || op == '-') {
+      ++mPos;
+      if (!ParseUnary(aPercent, aAbsPx)) {
+        return false;
+      }
+      if (op == '-') {
+        aPercent = -aPercent;
+        aAbsPx = -aAbsPx;
+      }
+      return true;
+    }
+    return ParseAtom(aPercent, aAbsPx);
+  }
+
+  bool ParseAtom(double& aPercent, double& aAbsPx)
+  {
+    if (!AtEnd() && *mPos == '(') {
+      ++mPos;
+      if (!ParseSum(aPercent, aAbsPx)) {
+        return false;
+      }
+      SkipWs();
+      if (AtEnd() || *mPos != ')') {
+        return false;
+      }
+      ++mPos;
+      return true;
+    }
+
+    RangedPtr<const char16_t> iter(mPos, mEnd);
+    RangedPtr<const char16_t> iterEnd(mEnd, mEnd);
+    double value;
+    if (!SVGContentUtils::ParseNumber(iter, iterEnd, value)) {
+      return false;
+    }
+    mPos = iter.get();
+
+    if (mPos < mEnd && *mPos == '%') {
+      ++mPos;
+      aPercent = value;
+      aAbsPx = 0;
+      return true;
+    }
+
+    // Consume an optional "px" (user unit) suffix; any other unit inside a
+    // calc() expression is left in place and rejected by the caller.
+    if (mEnd - mPos >= 2 &&
+        ((*mPos == 'p' || *mPos == 'P') && (mPos[1] == 'x' || mPos[1] == 'X'))) {
+      mPos += 2;
+    }
+    aPercent = 0;
+    aAbsPx = value;
+    return true;
+  }
+
+  const char16_t* mPos;
+  const char16_t* mEnd;
+};
+
+} // namespace
+
+static bool
+ParseCalcLengthString(const nsAString& aString, float& aPercent, float& aAbsPx)
+{
+  const char16_t* p = aString.BeginReading();
+  const char16_t* end = aString.EndReading();
+  while (p < end && SVGContentUtils::IsSVGWhitespace(*p)) {
+    ++p;
+  }
+  while (end > p && SVGContentUtils::IsSVGWhitespace(end[-1])) {
+    --end;
+  }
+
+  static const char16_t kCalcPrefix[] = { 'c', 'a', 'l', 'c', '(' };
+  if (end - p < 7) { // "calc()" plus at least one term
+    return false;
+  }
+  for (uint32_t i = 0; i < ArrayLength(kCalcPrefix); ++i) {
+    char16_t c = p[i];
+    if (c != kCalcPrefix[i] &&
+        !(c >= 'A' && c <= 'Z' && c + ('a' - 'A') == kCalcPrefix[i])) {
+      return false;
+    }
+  }
+  if (end[-1] != ')') {
+    return false;
+  }
+
+  CalcExprParser parser(p + ArrayLength(kCalcPrefix), end - 1);
+  double percent, absPx;
+  if (!parser.Parse(percent, absPx)) {
+    return false;
+  }
+  aPercent = float(percent);
+  aAbsPx = float(absPx);
+  return true;
+}
+
 static float GetMMPerPixel() { return MM_PER_INCH_FLOAT / 96; }
 
 static float
@@ -239,6 +452,16 @@ nsSVGLength2::GetUnitScaleFactor(nsIFrame *aFrame, uint8_t aUnitType) const
 }
 
 float
+nsSVGLength2::GetAnimValue(nsIFrame *aFrame) const
+{
+  nsIContent* content = aFrame->GetContent();
+  if (content->IsSVGElement()) {
+    return GetAnimValue(SVGElementMetrics(static_cast<nsSVGElement*>(content)));
+  }
+  return GetAnimValue(NonSVGFrameUserSpaceMetrics(aFrame));
+}
+
+float
 nsSVGLength2::GetUnitScaleFactor(const UserSpaceMetrics& aMetrics, uint8_t aUnitType) const
 {
   switch (aUnitType) {
@@ -282,6 +505,7 @@ nsSVGLength2::SetBaseValueInSpecifiedUnits(float aValue,
   }
   mBaseVal = aValue;
   mIsBaseSet = true;
+  mIsCalc = false;
   if (!mIsAnimated) {
     mAnimVal = mBaseVal;
   }
@@ -339,6 +563,7 @@ nsSVGLength2::NewValueSpecifiedUnits(uint16_t unitType,
   nsAttrValue emptyOrOldValue = aSVGElement->WillChangeLength(mAttrEnum);
   mBaseVal = valueInSpecifiedUnits;
   mIsBaseSet = true;
+  mIsCalc = false;
   mSpecifiedUnitType = uint8_t(unitType);
   if (!mIsAnimated) {
     mAnimVal = mBaseVal;
@@ -381,11 +606,44 @@ nsSVGLength2::SetBaseValueString(const nsAString &aValueAsString,
   uint16_t unitType;
 
   if (!GetValueFromString(aValueAsString, value, &unitType)) {
-    return NS_ERROR_DOM_SYNTAX_ERR;
+    // Not a plain SVG length; try a calc() expression before failing, so
+    // that markup like width="calc(100% - 2px)" is honored instead of
+    // being dropped with a parse failure.
+    float calcPercent, calcAbsPx;
+    if (!ParseCalcLengthString(aValueAsString, calcPercent, calcAbsPx)) {
+      return NS_ERROR_DOM_SYNTAX_ERR;
+    }
+    if (mIsBaseSet && mIsCalc && mCalcPercent == calcPercent &&
+        mCalcAbsPx == calcAbsPx) {
+      return NS_OK;
+    }
+
+    nsAttrValue emptyOrOldValue;
+    if (aDoSetAttr) {
+      emptyOrOldValue = aSVGElement->WillChangeLength(mAttrEnum);
+    }
+    mIsCalc = true;
+    mCalcPercent = calcPercent;
+    mCalcAbsPx = calcAbsPx;
+    // Calc values resolve against element metrics when used. Keep the unit
+    // based fields consistent for the code paths that don't know about calc.
+    mBaseVal = 0;
+    mSpecifiedUnitType = nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER;
+    mIsBaseSet = true;
+    if (!mIsAnimated) {
+      mAnimVal = mBaseVal;
+    }
+    else {
+      aSVGElement->AnimationNeedsResample();
+    }
+    if (aDoSetAttr) {
+      aSVGElement->DidChangeLength(mAttrEnum, emptyOrOldValue);
+    }
+    return NS_OK;
   }
 
   if (mIsBaseSet && mBaseVal == float(value) &&
-      mSpecifiedUnitType == uint8_t(unitType)) {
+      mSpecifiedUnitType == uint8_t(unitType) && !mIsCalc) {
     return NS_OK;
   }
 
@@ -395,6 +653,7 @@ nsSVGLength2::SetBaseValueString(const nsAString &aValueAsString,
   }
   mBaseVal = value;
   mIsBaseSet = true;
+  mIsCalc = false;
   mSpecifiedUnitType = uint8_t(unitType);
   if (!mIsAnimated) {
     mAnimVal = mBaseVal;
@@ -412,12 +671,32 @@ nsSVGLength2::SetBaseValueString(const nsAString &aValueAsString,
 void
 nsSVGLength2::GetBaseValueString(nsAString & aValueAsString) const
 {
+  if (mIsCalc) {
+    char16_t buf[64];
+    nsTextFormatter::snprintf(buf, ArrayLength(buf),
+                              u"calc(%g%% %s %gpx)",
+                              (double)mCalcPercent,
+                              mCalcAbsPx < 0 ? u"-" : u"+",
+                              (double)(mCalcAbsPx < 0 ? -mCalcAbsPx : mCalcAbsPx));
+    aValueAsString.Assign(buf);
+    return;
+  }
   GetValueString(aValueAsString, mBaseVal, mSpecifiedUnitType);
 }
 
 void
 nsSVGLength2::GetAnimValueString(nsAString & aValueAsString) const
 {
+  if (mIsCalc && !mIsAnimated) {
+    GetBaseValueString(aValueAsString);
+    return;
+  }
+  if (mIsCalc) {
+    // Animated calc lengths are stored as user units.
+    GetValueString(aValueAsString, mAnimVal,
+                   nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER);
+    return;
+  }
   GetValueString(aValueAsString, mAnimVal, mSpecifiedUnitType);
 }
 

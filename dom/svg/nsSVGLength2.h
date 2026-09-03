@@ -98,6 +98,9 @@ public:
     mCtxType = aCtxType;
     mIsAnimated = false;
     mIsBaseSet = false;
+    mIsCalc = false;
+    mCalcPercent = 0;
+    mCalcAbsPx = 0;
   }
 
   nsSVGLength2& operator=(const nsSVGLength2& aLength) {
@@ -106,6 +109,9 @@ public:
     mSpecifiedUnitType = aLength.mSpecifiedUnitType;
     mIsAnimated = aLength.mIsAnimated;
     mIsBaseSet = aLength.mIsBaseSet;
+    mIsCalc = aLength.mIsCalc;
+    mCalcPercent = aLength.mCalcPercent;
+    mCalcAbsPx = aLength.mCalcAbsPx;
     return *this;
   }
 
@@ -116,26 +122,45 @@ public:
   void GetAnimValueString(nsAString& aValue) const;
 
   float GetBaseValue(nsSVGElement* aSVGElement) const
-    { return mBaseVal / GetUnitScaleFactor(aSVGElement, mSpecifiedUnitType); }
+    { return GetBaseValue(SVGElementMetrics(aSVGElement)); }
 
   float GetAnimValue(nsSVGElement* aSVGElement) const
-    { return mAnimVal / GetUnitScaleFactor(aSVGElement, mSpecifiedUnitType); }
-  float GetAnimValue(nsIFrame* aFrame) const
-    { return mAnimVal / GetUnitScaleFactor(aFrame, mSpecifiedUnitType); }
+    { return GetAnimValue(SVGElementMetrics(aSVGElement)); }
+  float GetAnimValue(nsIFrame* aFrame) const;
   float GetAnimValue(mozilla::dom::SVGSVGElement* aCtx) const
-    { return mAnimVal / GetUnitScaleFactor(aCtx, mSpecifiedUnitType); }
+    { return GetAnimValue(SVGElementMetrics(aCtx, aCtx)); }
   float GetAnimValue(const UserSpaceMetrics& aMetrics) const
-    { return mAnimVal / GetUnitScaleFactor(aMetrics, mSpecifiedUnitType); }
+    {
+      return mIsCalc
+        ? (mIsAnimated ? mAnimVal : ResolveCalc(aMetrics))
+        : mAnimVal / GetUnitScaleFactor(aMetrics, mSpecifiedUnitType);
+    }
 
   uint8_t GetCtxType() const { return mCtxType; }
   uint8_t GetSpecifiedUnitType() const { return mSpecifiedUnitType; }
   bool IsPercentage() const
-    { return mSpecifiedUnitType == nsIDOMSVGLength::SVG_LENGTHTYPE_PERCENTAGE; }
-  float GetAnimValInSpecifiedUnits() const { return mAnimVal; }
-  float GetBaseValInSpecifiedUnits() const { return mBaseVal; }
+    {
+      return mIsCalc ? mCalcPercent != 0
+                     : mSpecifiedUnitType == nsIDOMSVGLength::SVG_LENGTHTYPE_PERCENTAGE;
+    }
+  // calc() length state: a value like "calc(100% - 2px)" is stored as a
+  // percentage component and an absolute (user unit) component, both resolved
+  // against the element's metrics when the length is used.
+  bool IsCalc() const { return mIsCalc; }
+  float CalcPercent() const { return mCalcPercent; }
+  float CalcAbsPx() const { return mCalcAbsPx; }
+  float GetAnimValInSpecifiedUnits() const
+    { return mIsCalc ? CalcSpecifiedValue() : mAnimVal; }
+  float GetBaseValInSpecifiedUnits() const
+    { return mIsCalc ? CalcSpecifiedValue() : mBaseVal; }
 
   float GetBaseValue(mozilla::dom::SVGSVGElement* aCtx) const
-    { return mBaseVal / GetUnitScaleFactor(aCtx, mSpecifiedUnitType); }
+    { return GetBaseValue(SVGElementMetrics(aCtx, aCtx)); }
+  float GetBaseValue(const UserSpaceMetrics& aMetrics) const
+    {
+      return mIsCalc ? ResolveCalc(aMetrics)
+                     : mBaseVal / GetUnitScaleFactor(aMetrics, mSpecifiedUnitType);
+    }
 
   bool HasBaseVal() const {
     return mIsBaseSet;
@@ -155,14 +180,26 @@ public:
   nsISMILAttr* ToSMILAttr(nsSVGElement* aSVGElement);
 
 private:
-  
+
   float mAnimVal;
   float mBaseVal;
+  float mCalcPercent; // percentage component when mIsCalc, else meaningless
+  float mCalcAbsPx;   // absolute (user unit) component when mIsCalc
   uint8_t mSpecifiedUnitType;
   uint8_t mAttrEnum; // element specified tracking for attribute
   uint8_t mCtxType; // X, Y or Unspecified
   bool mIsAnimated:1;
   bool mIsBaseSet:1;
+  bool mIsCalc:1;
+
+  float ResolveCalc(const UserSpaceMetrics& aMetrics) const
+    { return mCalcPercent / 100.0f * aMetrics.GetAxisLength(mCtxType) + mCalcAbsPx; }
+
+  // The closest single "value in specified units" for a calc() length: its
+  // percentage component, or the absolute component when there is none. Used
+  // by the percentage-based consumers of the specified-units accessors.
+  float CalcSpecifiedValue() const
+    { return mCalcPercent != 0 ? mCalcPercent : mCalcAbsPx; }
 
   float GetUnitScaleFactor(nsIFrame *aFrame, uint8_t aUnitType) const;
   float GetUnitScaleFactor(const UserSpaceMetrics& aMetrics, uint8_t aUnitType) const;

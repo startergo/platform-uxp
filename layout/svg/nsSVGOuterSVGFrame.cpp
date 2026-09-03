@@ -322,8 +322,16 @@ nsSVGOuterSVGFrame::ComputeSize(nsRenderingContext *aRenderingContext,
       MOZ_ASSERT(intrinsicSize.width.GetUnit() == eStyleUnit_None,
                  "GetIntrinsicSize should have reported no intrinsic width");
       float val = width.GetAnimValInSpecifiedUnits() / 100.0f;
+      if (width.IsCalc()) {
+        val = width.CalcPercent() / 100.0f;
+      }
       if (val < 0.0f) val = 0.0f;
-      intrinsicSize.width.SetCoordValue(val * cbSize.Width(aWM));
+      nscoord size = val * cbSize.Width(aWM);
+      if (width.IsCalc()) {
+        size += nsPresContext::CSSPixelsToAppUnits(width.CalcAbsPx());
+        if (size < 0) size = 0;
+      }
+      intrinsicSize.width.SetCoordValue(size);
     }
 
     nsSVGLength2 &height =
@@ -334,8 +342,16 @@ nsSVGOuterSVGFrame::ComputeSize(nsRenderingContext *aRenderingContext,
       MOZ_ASSERT(intrinsicSize.height.GetUnit() == eStyleUnit_None,
                  "GetIntrinsicSize should have reported no intrinsic height");
       float val = height.GetAnimValInSpecifiedUnits() / 100.0f;
+      if (height.IsCalc()) {
+        val = height.CalcPercent() / 100.0f;
+      }
       if (val < 0.0f) val = 0.0f;
-      intrinsicSize.height.SetCoordValue(val * cbSize.Height(aWM));
+      nscoord size = val * cbSize.Height(aWM);
+      if (height.IsCalc()) {
+        size += nsPresContext::CSSPixelsToAppUnits(height.CalcAbsPx());
+        if (size < 0) size = 0;
+      }
+      intrinsicSize.height.SetCoordValue(size);
     }
     MOZ_ASSERT(intrinsicSize.height.GetUnit() == eStyleUnit_Coord &&
                intrinsicSize.width.GetUnit() == eStyleUnit_Coord,
